@@ -1,0 +1,213 @@
+# Creating a single Streamlit app that includes:
+# - Brand -> Model dynamic selection (10 brands)
+# - Suggested ex-showroom prices per model (editable by user)
+# - Manual price override
+# - Tax estimation logic (GST, road tax, registration)
+# - JSON download
+# The file will be saved to /mnt/data/car_tax_taxpredictor_v1.py
+
+app_code = r'''
+import streamlit as st
+import json, base64
+
+st.set_page_config(page_title="Car Tax Predictor — India (Brand & Model)", layout="wide")
+
+st.title("Car Tax Predictor — India (Brand & Model)")
+st.write("Select brand & model (prices are suggested defaults). Edit price manually if needed. This is an approximate estimator for planning only.")
+
+# Brands -> models -> suggested ex-showroom prices (INR)
+inventory = {
+    "Maruti Suzuki": {
+        "Baleno": 800000,
+        "Swift": 650000,
+        "Brezza": 1100000
+    },
+    "Hyundai": {
+        "i20": 750000,
+        "Venue": 900000,
+        "Creta": 1500000
+    },
+    "Tata": {
+        "Tiago": 500000,
+        "Altroz": 800000,
+        "Nexon": 1200000
+    },
+    "Mahindra": {
+        "XUV700": 1900000,
+        "Thar": 1200000,
+        "Scorpio-N": 1600000
+    },
+    "Toyota": {
+        "Urban Cruiser": 900000,
+        "Glanza": 850000,
+        "Hyryder": 1500000
+    },
+    "Honda": {
+        "Amaze": 800000,
+        "City": 1100000,
+        "WR-V": 1000000
+    },
+    "Kia": {
+        "Sonet": 900000,
+        "Seltos": 1400000,
+        "Carnival": 2800000
+    },
+    "MG": {
+        "Hector": 1800000,
+        "Astor": 1400000,
+        "ZS EV": 2400000
+    },
+    "Skoda": {
+        "Rapid": 1200000,
+        "Slavia": 1400000,
+        "Kushaq": 1500000
+    },
+    "Volkswagen": {
+        "Polo": 700000,
+        "Virtus": 1300000,
+        "Tiguan": 3000000
+    }
+}
+
+# --- UI: selectors ---
+col1, col2, col3 = st.columns([1,1,1])
+
+with col1:
+    brand = st.selectbox("Brand", ["Select a brand"] + list(inventory.keys()))
+with col2:
+    models = ["Select a model"]
+    if brand != "Select a brand":
+        models += list(inventory[brand].keys())
+    model = st.selectbox("Model", models)
+with col3:
+    manual_price_override = st.checkbox("Enter price manually / override suggested", value=False)
+
+# Suggested price (auto-fill if model selected)
+suggested_price = None
+if brand != "Select a brand" and model != "Select a model":
+    suggested_price = inventory[brand][model]
+
+# Price input field (either filled by suggested price or left blank for manual entry)
+if manual_price_override:
+    ex_showroom = st.number_input("Ex-showroom price (INR)", min_value=10000, value=int(suggested_price or 800000), step=10000, format="%d")
+else:
+    # Show suggested price but allow edits (serves as both autofill + editable)
+    if suggested_price is not None:
+        ex_showroom = st.number_input("Ex-showroom price (INR)", min_value=10000, value=int(suggested_price), step=10000, format="%d")
+    else:
+        ex_showroom = st.number_input("Ex-showroom price (INR)", min_value=10000, value=800000, step=10000, format="%d")
+
+# Additional inputs
+col4, col5, col6 = st.columns(3)
+with col4:
+    engine_cc = st.number_input("Engine capacity (cc). Use 0 for EVs", min_value=0, value=1200, step=1)
+with col5:
+    is_ev = st.checkbox("Electric vehicle (EV)", value=False)
+with col6:
+    state = st.selectbox("State of registration", ["Maharashtra","Karnataka","Delhi","Tamil Nadu","Gujarat","Uttar Pradesh","West Bengal","Rajasthan","Other"])
+
+ownership = st.selectbox("Ownership", ["Individual","Company"])
+
+# --- Tax estimation logic ---
+road_tax_slabs = {
+    "Maharashtra": (0.07, 0.08),
+    "Karnataka": (0.13, 0.18),
+    "Delhi": (0.10, 0.125),
+    "Tamil Nadu": (0.10, 0.15),
+    "Gujarat": (0.06, 0.12),
+    "Uttar Pradesh": (0.08, 0.10),
+    "West Bengal": (0.10, 0.13),
+    "Rajasthan": (0.10, 0.12),
+    "Other": (0.10, 0.12)
+}
+
+def estimate_gst(ex_showroom, engine_cc, is_ev):
+    # Heuristic bands used for prototyping
+    if is_ev:
+        gst_rate = 0.05
+    else:
+        if engine_cc > 0 and engine_cc <= 1200:
+            gst_rate = 0.18
+        else:
+            if ex_showroom <= 10_00_000:
+                gst_rate = 0.18
+            else:
+                gst_rate = 0.40
+    gst_amount = int(ex_showroom * gst_rate)
+    return gst_rate, gst_amount
+
+def estimate_road_tax(ex_showroom, state, is_ev, ownership):
+    slab = road_tax_slabs.get(state, road_tax_slabs["Other"])
+    if ex_showroom <= 10_00_000:
+        base_rate = slab[0]
+    else:
+        base_rate = slab[1]
+    if is_ev:
+        base_rate = max(0.0, base_rate - 0.06)
+    if ownership == "Company":
+        base_rate = base_rate * 1.25
+    road_tax_amount = int(ex_showroom * base_rate)
+    return base_rate, road_tax_amount
+
+def estimate_registration_fee(ex_showroom):
+    reg_flat = 2000
+    reg_pct = 0.02 if ex_showroom <= 10_00_000 else 0.025
+    return int(reg_flat + ex_showroom * reg_pct)
+
+# Button to calculate
+if st.button("Estimate taxes"):
+    gst_rate, gst_amt = estimate_gst(ex_showroom, engine_cc, is_ev)
+    road_rate, road_amt = estimate_road_tax(ex_showroom, state, is_ev, ownership)
+    reg_fee = estimate_registration_fee(ex_showroom)
+    total_payable = ex_showroom + gst_amt + road_amt + reg_fee
+
+    st.subheader("Estimated tax breakdown (approx.)")
+    left, right = st.columns([1,1])
+    with left:
+        st.write("**Selected**")
+        st.write(f"- Brand: {brand if brand else '-'}")
+        st.write(f"- Model: {model if model else '-'}")
+        st.write(f"- Ex-showroom price: ₹{ex_showroom:,}")
+        st.write(f"- Engine: {engine_cc} cc {'(EV)' if is_ev else ''}")
+        st.write(f"- State: {state}")
+        st.write(f"- Ownership: {ownership}")
+    with right:
+        st.write("**Taxes & fees**")
+        st.write(f"- GST ({gst_rate*100:.1f}%): ₹{gst_amt:,}")
+        st.write(f"- Road tax ({road_rate*100:.2f}%): ₹{road_amt:,}")
+        st.write(f"- Registration & RTO (est): ₹{reg_fee:,}")
+        st.markdown("---")
+        st.write(f"**Estimated total on invoice (incl. taxes): ₹{total_payable:,}**")
+
+    st.info("Notes: This is a prototype using simplified heuristics. Confirm exact rates with dealer / RTO.")
+
+    # JSON download
+    summary = {
+        "brand": brand,
+        "model": model,
+        "ex_showroom": ex_showroom,
+        "engine_cc": engine_cc,
+        "is_ev": is_ev,
+        "state": state,
+        "ownership": ownership,
+        "gst_rate": gst_rate,
+        "gst_amount": gst_amt,
+        "road_rate": road_rate,
+        "road_amount": road_amt,
+        "registration_fee": reg_fee,
+        "total_payable": total_payable
+    }
+    b64 = base64.b64encode(json.dumps(summary, indent=2).encode()).decode()
+    href = f'<a download="car_tax_estimate.json" href="data:application/json;base64,{b64}">Download estimate (JSON)</a>'
+    st.markdown(href, unsafe_allow_html=True)
+
+st.caption("Prototype — educational / planning use only. Not legal or tax advice.")
+'''
+
+# Write file
+path = '/mnt/data/car_tax_taxpredictor_v1.py'
+with open(path, 'w') as f:
+    f.write(app_code)
+
+print(f"Wrote {path} -- Run with: streamlit run {path}")
+
