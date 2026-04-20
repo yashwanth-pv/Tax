@@ -1,3 +1,0 @@
-CAR TAX PREDICTOR
-
-Built a Car Tax Predictor app using Exploratory Data Analysis (EDA) and machine learning to estimate vehicle tax based on features like engine size, fuel type, and emissions. Cleaned and analyzed data, engineered features, and trained models to deliver accurate, user-friendly predictions via an interactive interface.
